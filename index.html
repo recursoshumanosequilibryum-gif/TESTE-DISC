@@ -369,6 +369,7 @@
     </div>
   </header>
 
+  <div id="candidateSection">
   <div class="intro-card">
     <h2>Como funciona</h2>
     <p>Este instrumento identifica o <strong>estilo comportamental predominante</strong> do candidato a partir do modelo DISC (Dominância, Influência, Estabilidade e Conformidade). Ele mede preferências de comportamento no ambiente de trabalho — não mede competência técnica, inteligência ou qualificação para a vaga, e deve ser usado em conjunto com entrevista e avaliação técnica.</p>
@@ -402,13 +403,32 @@
     <div id="blocksContainer"></div>
 
     <div class="submit-zone">
-      <button type="submit" class="primary-btn">Calcular perfil</button>
-      <div class="submit-note">O resultado é calculado no seu navegador e pode ser impresso ou salvo em PDF ao final.</div>
+      <button type="submit" class="primary-btn">Enviar respostas</button>
+      <div class="submit-note">Suas respostas serão registradas com segurança. Você não verá o resultado — ele fica disponível apenas para o RH.</div>
     </div>
   </form>
+  </div>
+
+  <div id="doneScreen" style="display:none;">
+    <div class="result-card" style="text-align:center;">
+      <h2>Obrigado!</h2>
+      <p style="color:var(--ink-soft); font-size:0.94rem;">Suas respostas foram registradas com sucesso. Você já pode fechar esta página — não é necessário enviar nada para o RH.</p>
+    </div>
+  </div>
+
+  <div id="rhPanel" style="display:none;">
+    <div class="intro-card">
+      <h2>Painel RH — candidatos</h2>
+      <p id="rhListStatus">Carregando respostas...</p>
+      <div id="rhList" style="margin-top:14px;"></div>
+    </div>
+  </div>
 
   <div id="results">
     <div class="result-card">
+      <div class="actions" id="backToListActions" style="display:none; margin-top:0; margin-bottom:20px;">
+        <button type="button" class="secondary-btn" onclick="backToList()">&larr; Voltar à lista</button>
+      </div>
       <h2>Resultado — Perfil DISC</h2>
       <div class="candidate-line" id="candidateLine"></div>
 
@@ -577,6 +597,9 @@ const archetypes = {
   }
 };
 
+// URL do Web App do Google Apps Script (preenchida após o deploy — ver instruções)
+const APPS_SCRIPT_URL = 'COLE_AQUI_A_URL_DO_APPS_SCRIPT';
+
 document.getElementById('discForm').addEventListener('submit', function(e){
   e.preventDefault();
 
@@ -601,11 +624,13 @@ document.getElementById('discForm').addEventListener('submit', function(e){
   // score
   const more = {D:0,I:0,S:0,C:0};
   const less = {D:0,I:0,S:0,C:0};
+  let pairs = '';
   for(let i=0;i<24;i++){
     const mIdx = parseInt(document.querySelector(`input[name="mais_${i}"]:checked`).value);
     const lIdx = parseInt(document.querySelector(`input[name="menos_${i}"]:checked`).value);
     more[blocks[i][mIdx].dim]++;
     less[blocks[i][lIdx].dim]++;
+    pairs += blocks[i][mIdx].dim + blocks[i][lIdx].dim;
   }
   const adapted = {
     D: more.D - less.D,
@@ -614,13 +639,70 @@ document.getElementById('discForm').addEventListener('submit', function(e){
     C: more.C - less.C
   };
 
-  renderResults(adapted);
+  const payload = {
+    nome: document.getElementById('candName').value.trim(),
+    cargo: document.getElementById('candRole').value.trim(),
+    data: document.getElementById('candDate').value,
+    D: adapted.D, I: adapted.I, S: adapted.S, C: adapted.C,
+    pares: pairs
+  };
+
+  // Envia para a planilha em segundo plano (não bloqueia o candidato mesmo se falhar a leitura da resposta)
+  fetch(APPS_SCRIPT_URL, {
+    method: 'POST',
+    mode: 'no-cors',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify(payload)
+  }).catch(()=>{});
+
+  document.getElementById('candidateSection').style.display = 'none';
+  document.getElementById('doneScreen').style.display = 'block';
+  document.getElementById('doneScreen').scrollIntoView({behavior:'smooth', block:'start'});
 });
 
-function renderResults(adapted){
-  const name = document.getElementById('candName').value.trim() || "Candidato(a) não identificado(a)";
-  const role = document.getElementById('candRole').value.trim();
-  const date = document.getElementById('candDate').value;
+let rhCandidates = [];
+
+function loadCandidateList(){
+  const statusEl = document.getElementById('rhListStatus');
+  const listEl = document.getElementById('rhList');
+  fetch(APPS_SCRIPT_URL + '?mode=list')
+    .then(r => r.json())
+    .then(rows => {
+      rhCandidates = rows;
+      if(!rows.length){
+        statusEl.textContent = 'Nenhuma resposta registrada ainda.';
+        return;
+      }
+      statusEl.textContent = rows.length + ' resposta(s) registrada(s). Clique em um nome para ver o perfil.';
+      listEl.innerHTML = rows.map((row, idx) => `
+        <div class="block" style="cursor:pointer; padding:14px 18px;" onclick="viewCandidate(${idx})">
+          <div style="font-weight:600;">${row.Nome || 'Candidato(a) não identificado(a)'}</div>
+          <div style="font-size:0.85rem; color:var(--ink-soft);">${row.Cargo ? row.Cargo + ' · ' : ''}${row.Data ? formatDate(row.Data) + ' · ' : ''}respondido em ${new Date(row.Timestamp).toLocaleString('pt-BR')}</div>
+        </div>
+      `).join('');
+    })
+    .catch(() => {
+      statusEl.textContent = 'Não foi possível carregar as respostas. Confira se a URL do Apps Script foi configurada corretamente.';
+    });
+}
+
+function viewCandidate(idx){
+  const row = rhCandidates[idx];
+  const adapted = { D: Number(row.D), I: Number(row.I), S: Number(row.S), C: Number(row.C) };
+  renderResults(adapted, row.Nome, row.Cargo, row.Data);
+  document.getElementById('rhPanel').style.display = 'none';
+  document.getElementById('backToListActions').style.display = 'flex';
+}
+
+function backToList(){
+  document.getElementById('results').style.display = 'none';
+  document.getElementById('backToListActions').style.display = 'none';
+  document.getElementById('rhPanel').style.display = 'block';
+}
+
+function renderResults(adapted, name, role, date){
+  name = (name || '').trim() || "Candidato(a) não identificado(a)";
+  role = (role || '').trim();
   document.getElementById('candidateLine').textContent =
     name + (role ? ' · vaga: ' + role : '') + (date ? ' · aplicado em ' + formatDate(date) : '');
 
@@ -693,6 +775,21 @@ function formatDate(iso){
   const [y,m,d] = iso.split('-');
   return d+'/'+m+'/'+y;
 }
+
+// --- Mode switch: candidate link vs RH link ---
+// RH accesses this same page with ?painel=equilibryum-rh2026 in the URL.
+// This is a lightweight access key, not real authentication — it just keeps
+// the calculator off the plain link sent to candidates.
+const RH_ACCESS_KEY = 'equilibryum-rh2026';
+const urlParams = new URLSearchParams(location.search);
+const isRHMode = urlParams.get('painel') === RH_ACCESS_KEY;
+
+if(isRHMode){
+  document.getElementById('candidateSection').style.display = 'none';
+  document.getElementById('rhPanel').style.display = 'block';
+  loadCandidateList();
+}
+
 </script>
 </body>
 </html>
