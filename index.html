@@ -772,7 +772,12 @@ function renderResults(adapted, name, role, date){
 }
 
 function formatDate(iso){
-  const [y,m,d] = iso.split('-');
+  if(!iso) return '';
+  // O Google Sheets às vezes converte a data em data/hora completa
+  // (ex.: 2026-09-03T03:00:00.000Z) — pega só a parte da data antes de formatar.
+  const datePart = String(iso).split('T')[0];
+  const [y,m,d] = datePart.split('-');
+  if(!y||!m||!d) return String(iso);
   return d+'/'+m+'/'+y;
 }
 
